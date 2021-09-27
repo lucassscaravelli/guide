@@ -1,3 +1,33 @@
+# 2021-04-19
+
+- Programs should exit only in `main()`, preferably at most once.
+
+# 2021-03-15
+
+- Add guidance on omitting zero-value fields during struct initialization.
+- Add guidance on `Foo{}` versus `var` form for initialization of empty
+  structs.
+- Add new section for Initializing Structs, moving relevant guidances into
+  subsections of it.
+
+# 2020-06-10
+
+- Add guidance on avoiding `init()`.
+- Add guidance to avoid using built-in names.
+- Add reminder that nil slices are not always the same as empty slices.
+
+# 2020-02-24
+
+- Add guidance on verifying interface compliance with compile-time checks.
+
+# 2020-01-30
+
+- Recommend using the `time` package when dealing with time.
+
+# 2020-01-25
+
+- Add guidance against embedding types in public structs.
+
 # 2019-12-17
 
 - Functional Options: Recommend struct implementations of `Option` interface
