@@ -55,13 +55,14 @@ row before the </tbody></table> line.
 - [Introdução](#introdução)
 - [Diretrizes](#diretrizes)
   - [Ponteiros para interfaces](#ponteiros-para-interfaces)
-  - [Verifique o "Contrato" da Interface](#verifique-o-"contrato"-da-interface)
+  - [Verificar o "Contrato" da Interface](#verificar-o-"contrato"-da-interface)
   - [Receptores e Interfaces](#receptores-e-interfaces)
   - [Mutexes com valor zero são validos](#mutexes-com-valor-zero-são-validos)
   - [Copiar slices e mapas com limites](#copiar-slices-e-mapas-com-limites)
   - [Defer para "limpar"](#defer-para-limpar)
   - [Tamanho no canal é um ou nenhum](#tamanho-no-canal-é-um-ou-nenhum)
   - [Iniciar enums em um](#iniciar-enums-em-um)
+  - [Utilizar `"time"` para lidar com tempo](#utilizar-"time"-para-lidar-com-tempo)
   - [Tipo Erros](#tipo-erros)
   - [Utilizando Error Wrapping](#utilizando-error-wrapping)
   - [Manipular falhas de asserção de tipo](#manipular-falhas-de-asserção-de-tipo)
@@ -136,7 +137,7 @@ Uma interface é divida em dois campos:
 
 Se você deseja que os métodos da interface modifiquem os dados que a mesma possuirá, use um ponteiro.
 
-### Verifique o "Contrato" da Interface 
+### Verificar o "Contrato" da Interface 
 
 Verificar o "contrato" da interface no momento do _build_ é apropriado. Isso incluí:
 
@@ -583,6 +584,152 @@ const (
 
 // LogToStdout=0, LogToFile=1, LogToRemote=2
 ```
+### Utilizar `"time"` para lidar com tempo
+
+Tempo é complicado. Suposições incorretas frequentemente feitas sobre o tempo incluem o seguinte:
+
+1. Um dia tem 24 horas
+2. Uma hora tem 60 minutos
+3. Uma semana tem 7 dias
+4. Um ano tem 365 dias
+5. [E muito mais](https://infiniteundo.com/post/25326999628/falsehoods-programmers-believe-about-time)
+
+Por exemplo, *1* significa que adicionando 24 horas em um instante de tempo nem sempre resultará em um novo dia de calendário.
+
+Portanto, utilize sempre o pacote [`"time"`] ao lidar com o tempo, porque ele
+ajuda a com estes pressupostos incorrectos de uma forma mais segura e precisa.
+
+  [`"time"`]: https://golang.org/pkg/time/
+
+#### Utilizar `time.Time` para instantes de tempo
+
+Utilizar [`time.Time`] quando lidar com instantes de tempo e os métodos no pacote `time.Time` ao comparar, adicionar e subtrair tempo.
+
+  [`time.Time`]: https://golang.org/pkg/time/#Time
+
+<table>
+<thead><tr><th>Ruim</th><th>Bom</th></tr></thead>
+<tbody>
+<tr><td>
+
+```go
+func isActive(now, start, stop int) bool {
+  return start <= now && now < stop
+}
+```
+
+</td><td>
+
+```go
+func isActive(now, start, stop time.Time) bool {
+  return (start.Before(now) || start.Equal(now)) && now.Before(stop)
+}
+```
+
+</td></tr>
+</tbody></table>
+
+#### Utilizar `time.Duration` para períodos de tempo
+
+Utilizar [`time.Duration`] quando lidar com períodos de tempo.
+
+[`time.Duration`]: https://golang.org/pkg/time/#Duration
+
+<table>
+<thead><tr><th>Ruim</th><th>Bom</th></tr></thead>
+<tbody>
+<tr><td>
+
+```go
+func poll(delay int) {
+  for {
+    // ...
+    time.Sleep(time.Duration(delay) * time.Millisecond)
+  }
+}
+
+poll(10) // was it seconds or milliseconds?
+```
+
+</td><td>
+
+```go
+func poll(delay time.Duration) {
+  for {
+    // ...
+    time.Sleep(delay)
+  }
+}
+
+poll(10*time.Second)
+```
+
+</td></tr>
+</tbody></table>
+
+Voltando ao exemplo de adicionar 24 horas em um instante de tempo, o método que foi utilizado para adicionar tempo depende da intenção. Se deseja o mesmo tempo do dia, porém no próximo dia do calendário, deve utilizar [`Time.AddDate`]. No entanto, se deseja um instante de tempo (garantido) de 24 horas após o horário anterior, devemos utilizar [`Time.Add`].
+
+  [`Time.AddDate`]: https://golang.org/pkg/time/#Time.AddDate
+  [`Time.Add`]: https://golang.org/pkg/time/#Time.Add
+
+```go
+newDay := t.AddDate(0 /* years */, 0 /* months */, 1 /* days */)
+maybeNewDay := t.Add(24 * time.Hour)
+```
+#### Utilizar `time.Time` e `time.Duration` com sistemas externos
+
+Utilizar `time.Duration` e `time.Time` em interações com sistemas externos quando possível. Por exemplo:
+
+- Flags de linha de comando: [`flag`] suporta `time.Duration` via [`time.ParseDuration`]
+- JSON: [`encoding/json`] suporta _enconding_ `time.Time` no formato [RFC 3339]
+- SQL: [`database/sql`] suporta converter colunas `DATETIME` ou `TIMESTAMP` em `time.Time` e ao contrário também, se o driver (subjacente) suportar isso
+- YAML: [`gopkg.in/yaml.v2`] suporta `time.Time` no formato [RFC 3339] _string_, e `time.Duration` via [`time.ParseDuration`]
+
+  [`flag`]: https://golang.org/pkg/flag/
+  [`time.ParseDuration`]: https://golang.org/pkg/time/#ParseDuration
+  [`encoding/json`]: https://golang.org/pkg/encoding/json/
+  [RFC 3339]: https://tools.ietf.org/html/rfc3339
+  [`UnmarshalJSON` method]: https://golang.org/pkg/time/#Time.UnmarshalJSON
+  [`database/sql`]: https://golang.org/pkg/database/sql/
+  [`gopkg.in/yaml.v2`]: https://godoc.org/gopkg.in/yaml.v2
+
+Quando não for possível utilizar `time.Duration` nessas interações, utilize `int` ou `float64`e inclua a unidade de medida no nome do campo.
+
+Por exemplo, desde que `enconding/json` não suporta `time.Duration`, a unidade de medida é incluida no nome do campo.
+
+<table>
+<thead><tr><th>Bad</th><th>Good</th></tr></thead>
+<tbody>
+<tr><td>
+
+```go
+// {"interval": 2}
+type Config struct {
+  Interval int `json:"interval"`
+}
+```
+
+</td><td>
+
+```go
+// {"intervalMillis": 2000}
+type Config struct {
+  IntervalMillis int `json:"intervalMillis"`
+}
+```
+
+</td></tr>
+</tbody></table>
+
+Quando não é possível utilizar `time.Time` nessas interações, a menos que haja um acordo em comum, utilize `string` e formate _timestamps_ no formato [RFC 3339]. Esse formato é utilizado como _default_ em [`Time.UnmarshalText`] e esta disponível para uso no `Time.Format` e `time.Parse` via [`time.RFC3339`].
+
+  [`Time.UnmarshalText`]: https://golang.org/pkg/time/#Time.UnmarshalText
+  [`time.RFC3339`]: https://golang.org/pkg/time/#RFC3339
+
+Embora isto tenda a não ser um problema na prática, tenha em mente que o pacote "`time`" não suporta "_parsear_" _timestamps_ com segundos intercalares ([8728]) nem inclui os mesmos nos cálculos ([15190]). Se você comparar dois instantes de tempo, a difereça não inclui os segundos intercalares que podem ter ocorrido entre esses dois instantes.
+
+  [8728]: https://github.com/golang/go/issues/8728
+  [15190]: https://github.com/golang/go/issues/15190
 
 <!-- TODO: seção sobre métodos de string para enumerações -->
 
