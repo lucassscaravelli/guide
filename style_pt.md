@@ -55,6 +55,7 @@ row before the </tbody></table> line.
 - [Introdução](#introdução)
 - [Diretrizes](#diretrizes)
   - [Ponteiros para interfaces](#ponteiros-para-interfaces)
+  - [Verifique o "Contrato" da Interface](#verifique-o-"contrato"-da-interface)
   - [Receptores e Interfaces](#receptores-e-interfaces)
   - [Mutexes com valor zero são validos](#mutexes-com-valor-zero-são-validos)
   - [Copiar slices e mapas com limites](#copiar-slices-e-mapas-com-limites)
@@ -112,6 +113,7 @@ Este guia documenta as convenções idiomáticas no código Go que seguimos no U
 
 1. [Effective Go](https://golang.org/doc/effective_go.html)
 2. [The Go common mistakes guide](https://github.com/golang/go/wiki/CodeReviewComments)
+3. [Go Code Review Comments](https://github.com/golang/go/wiki/CodeReviewComments)
 
 Todo o código deve estar livre de erros ao executar o golint e go vet. Recomendamos configurar seu editor para:
 
@@ -126,11 +128,81 @@ Você pode encontrar informações no suporte do editor para as ferramentas Go a
 
 Você quase nunca precisa de um ponteiro para uma interface. Você deve passar interfaces como valores pois quando a mesma for implementada, ainda pode ser um ponteiro.
 
-1. Uma interface é divida em dois campos:
+Uma interface é divida em dois campos:
 
-2. Um ponteiro para algum tipo específico.
+1. Um ponteiro para um tipo específico.
+
+2. _Data pointer_. Se o dado armazenado é um ponteiro, então o valor salvo na interface é o próprio ponteiro. Se o dado armazenado é um valor, então um ponteiro para este valor é armazenado na interface. 
 
 Se você deseja que os métodos da interface modifiquem os dados que a mesma possuirá, use um ponteiro.
+
+### Verifique o "Contrato" da Interface 
+
+Verificar o "contrato" da interface no momento do _build_ é apropriado. Isso incluí:
+
+- Tipos exportados que são requiridos para implementar interfaces específicas como parte de seu contrato de API.
+- Tipos exportados ou não exportados que são parte de conjunto de outros tipos implementando a mesma interface.
+- Outros casos em que violação da interface irá travar usuários.
+
+<table>
+<thead><tr><th>Ruim</th><th>Bom</th></tr></thead>
+<tbody>
+<tr><td>
+
+```go
+type Handler struct {
+  // ...
+}
+
+
+
+func (h *Handler) ServeHTTP(
+  w http.ResponseWriter,
+  r *http.Request,
+) {
+  ...
+}
+```
+
+</td><td>
+
+```go
+type Handler struct {
+  // ...
+}
+
+var _ http.Handler = (*Handler)(nil)
+
+func (h *Handler) ServeHTTP(
+  w http.ResponseWriter,
+  r *http.Request,
+) {
+  // ...
+}
+```
+
+</td></tr>
+</tbody></table>
+
+O código `var _ http.Handler = (*Handler)(nil)` irá falhar se o `*Handler` parar de corresponder a interface `http.Handler`.
+
+O valor atribuido deve ser o "valor zero" do tipo correspondente. Sendo `nil` para tipos de ponteiros (como `*Handler`), _slices_, _maps_ e uma _struct_ vazia para tipos de _struct_. 
+
+```go
+type LogHandler struct {
+  h   http.Handler
+  log *zap.Logger
+}
+
+var _ http.Handler = LogHandler{}
+
+func (h LogHandler) ServeHTTP(
+  w http.ResponseWriter,
+  r *http.Request,
+) {
+  // ...
+}
+```
 
 ### Receptores e Interfaces
 
@@ -194,9 +266,9 @@ i = s2Ptr
 // Isso não compila, pois s2Val é um valor da struct S2 e portanto não pode utilizar-se do metódo f(), que tem como receptor um ponteiro
 //   i = s2Val
 ```
-Effective Go tem uma boa abordagem sobre isso em Pointers and Values [Pointers vs. Values].
+_Effective Go_ tem uma boa abordagem sobre isso em _Pointers_ and Values [Pointers vs. Values].
 
-[Pointers vs. Values]: https://golang.org/doc/effective_go.html#pointers_vs_values
+[Pointers vs. Values]: https://golang.org/doc/effective_go.html#pointers_vs_values
 
 ### Mutexes com valor zero são validos
 
