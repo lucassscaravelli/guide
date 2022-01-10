@@ -63,8 +63,10 @@ row before the </tbody></table> line.
   - [Channel Size is One or None](#channel-size-is-one-or-none)
   - [Start Enums at One](#start-enums-at-one)
   - [Use `"time"` to handle time](#use-time-to-handle-time)
-  - [Error Types](#error-types)
-  - [Error Wrapping](#error-wrapping)
+  - [Errors](#errors)
+    - [Error Types](#error-types)
+    - [Error Wrapping](#error-wrapping)
+    - [Error Naming](#error-naming)
   - [Handle Type Assertion Failures](#handle-type-assertion-failures)
   - [Don't Panic](#dont-panic)
   - [Use go.uber.org/atomic](#use-gouberorgatomic)
@@ -81,6 +83,7 @@ row before the </tbody></table> line.
       - [Specifying Map Capacity Hints](#specifying-map-capacity-hints)
       - [Specifying Slice Capacity](#specifying-slice-capacity)
 - [Style](#style)
+  - [Avoid overly long lines](#avoid-overly-long-lines)
   - [Be Consistent](#be-consistent)
   - [Group Similar Declarations](#group-similar-declarations)
   - [Import Group Ordering](#import-group-ordering)
@@ -810,34 +813,43 @@ seconds that may have occurred between those two instants.
 
 <!-- TODO: section on String methods for enums -->
 
-### Error Types
+### Errors
 
-There are various options for declaring errors:
+#### Error Types
 
-- [`errors.New`] for errors with simple static strings
-- [`fmt.Errorf`] for formatted error strings
-- Custom types that implement an `Error()` method
-- Wrapped errors using [`"pkg/errors".Wrap`]
+There are few options for declaring errors.
+Consider the following before picking the option best suited for your use case.
 
-When returning errors, consider the following to determine the best choice:
+- Does the caller need to match the error so that they can handle it?
+  If yes, we must support the [`errors.Is`] or [`errors.As`] functions
+  by declaring a top-level error variable or a custom type.
+- Is the error message a static string,
+  or is it a dynamic string that requires contextual information?
+  For the former, we can use [`errors.New`], but for the latter we must
+  use [`fmt.Errorf`] or a custom error type.
+- Are we propagating a new error returned by a downstream function?
+  If so, see the [section on error wrapping](#error-wrapping).
 
-- Is this a simple error that needs no extra information? If so, [`errors.New`]
-  should suffice.
-- Do the clients need to detect and handle this error? If so, you should use a
-  custom type, and implement the `Error()` method.
-- Are you propagating an error returned by a downstream function? If so, check
-  the [section on error wrapping](#error-wrapping).
-- Otherwise, [`fmt.Errorf`] is okay.
+[`errors.Is`]: https://golang.org/pkg/errors/#Is
+[`errors.As`]: https://golang.org/pkg/errors/#As
 
-  [`errors.New`]: https://golang.org/pkg/errors/#New
-  [`fmt.Errorf`]: https://golang.org/pkg/fmt/#Errorf
-  [`"pkg/errors".Wrap`]: https://godoc.org/github.com/pkg/errors#Wrap
+| Error matching? | Error Message | Guidance                            |
+|-----------------|---------------|-------------------------------------|
+| No              | static        | [`errors.New`]                      |
+| No              | dynamic       | [`fmt.Errorf`]                      |
+| Yes             | static        | top-level `var` with [`errors.New`] |
+| Yes             | dynamic       | custom `error` type                 |
 
-If the client needs to detect the error, and you have created a simple error
-using [`errors.New`], use a var for the error.
+[`errors.New`]: https://golang.org/pkg/errors/#New
+[`fmt.Errorf`]: https://golang.org/pkg/fmt/#Errorf
+
+For example,
+use [`errors.New`] for an error with a static string.
+Export this error as a variable to support matching it with `errors.Is`
+if the caller needs to match and handle this error.
 
 <table>
-<thead><tr><th>Bad</th><th>Good</th></tr></thead>
+<thead><tr><th>No error matching</th><th>Error matching</th></tr></thead>
 <tbody>
 <tr><td>
 
@@ -850,14 +862,9 @@ func Open() error {
 
 // package bar
 
-func use() {
-  if err := foo.Open(); err != nil {
-    if err.Error() == "could not open" {
-      // handle
-    } else {
-      panic("unknown error")
-    }
-  }
+if err := foo.Open(); err != nil {
+  // Can't handle the error.
+  panic("unknown error")
 }
 ```
 
@@ -876,7 +883,7 @@ func Open() error {
 
 if err := foo.Open(); err != nil {
   if errors.Is(err, foo.ErrCouldNotOpen) {
-    // handle
+    // handle the error
   } else {
     panic("unknown error")
   }
@@ -886,53 +893,56 @@ if err := foo.Open(); err != nil {
 </td></tr>
 </tbody></table>
 
-If you have an error that clients may need to detect, and you would like to add
-more information to it (e.g., it is not a static string), then you should use a
-custom type.
+For an error with a dynamic string,
+use [`fmt.Errorf`] if the caller does not need to match it,
+and a custom `error` if the caller does need to match it.
 
 <table>
-<thead><tr><th>Bad</th><th>Good</th></tr></thead>
+<thead><tr><th>No error matching</th><th>Error matching</th></tr></thead>
 <tbody>
 <tr><td>
 
 ```go
-func open(file string) error {
+// package foo
+
+func Open(file string) error {
   return fmt.Errorf("file %q not found", file)
 }
 
-func use() {
-  if err := open("testfile.txt"); err != nil {
-    if strings.Contains(err.Error(), "not found") {
-      // handle
-    } else {
-      panic("unknown error")
-    }
-  }
+// package bar
+
+if err := foo.Open("testfile.txt"); err != nil {
+  // Can't handle the error.
+  panic("unknown error")
 }
 ```
 
 </td><td>
 
 ```go
-type errNotFound struct {
-  file string
+// package foo
+
+type NotFoundError struct {
+  File string
 }
 
-func (e errNotFound) Error() string {
-  return fmt.Sprintf("file %q not found", e.file)
+func (e *NotFoundError) Error() string {
+  return fmt.Sprintf("file %q not found", e.File)
 }
 
-func open(file string) error {
-  return errNotFound{file: file}
+func Open(file string) error {
+  return &NotFoundError{File: file}
 }
 
-func use() {
-  if err := open("testfile.txt"); err != nil {
-    if _, ok := err.(errNotFound); ok {
-      // handle
-    } else {
-      panic("unknown error")
-    }
+
+// package bar
+
+if err := foo.Open("testfile.txt"); err != nil {
+  var notFound *NotFoundError
+  if errors.As(err, &notFound) {
+    // handle the error
+  } else {
+    panic("unknown error")
   }
 }
 ```
@@ -940,58 +950,39 @@ func use() {
 </td></tr>
 </tbody></table>
 
-Be careful with exporting custom error types directly since they become part of
-the public API of the package. It is preferable to expose matcher functions to
-check the error instead.
+Note that if you export error variables or types from a package,
+they will become part of the public API of the package.
 
-```go
-// package foo
-
-type errNotFound struct {
-  file string
-}
-
-func (e errNotFound) Error() string {
-  return fmt.Sprintf("file %q not found", e.file)
-}
-
-func IsNotFoundError(err error) bool {
-  _, ok := err.(errNotFound)
-  return ok
-}
-
-func Open(file string) error {
-  return errNotFound{file: file}
-}
-
-// package bar
-
-if err := foo.Open("foo"); err != nil {
-  if foo.IsNotFoundError(err) {
-    // handle
-  } else {
-    panic("unknown error")
-  }
-}
-```
-
-<!-- TODO: Exposing the information to callers with accessor functions. -->
-
-### Error Wrapping
+#### Error Wrapping
 
 There are three main options for propagating errors if a call fails:
 
-- Return the original error if there is no additional context to add and you
-  want to maintain the original error type.
-- Add context using [`"pkg/errors".Wrap`] so that the error message provides
-  more context and [`"pkg/errors".Cause`] can be used to extract the original
-  error.
-- Use [`fmt.Errorf`] if the callers do not need to detect or handle that
-  specific error case.
+- return the original error as-is
+- add context with `fmt.Errorf` and the `%w` verb
+- add context with `fmt.Errorf` and the `%v` verb
 
-It is recommended to add context where possible so that instead of a vague
-error such as "connection refused", you get more useful errors such as
-"call service foo: connection refused".
+Return the original error as-is if there is no additional context to add.
+This maintains the original error type and message.
+This is well suited for cases when the underlying error message
+has sufficient information to track down where it came from.
+
+Otherwise, add context to the error message where possible
+so that instead of a vague error such as "connection refused",
+you get more useful errors such as "call service foo: connection refused".
+
+Use `fmt.Errorf` to add context to your errors,
+picking between the `%w` or `%v` verbs
+based on whether the caller should be able to
+match and extract the underlying cause.
+
+- Use `%w` if the caller should have access to the underlying error.
+  This is a good default for most wrapped errors,
+  but be aware that callers may begin to rely on this behavior.
+  So for cases where the wrapped error is a known `var` or type,
+  document and test it as part of your function's contract.
+- Use `%v` to obfuscate the underlying error.
+  Callers will be unable to match it,
+  but you can switch to `%w` in the future if needed.
 
 When adding context to returned errors, keep the context succinct by avoiding
 phrases like "failed to", which state the obvious and pile up as the error
@@ -1006,7 +997,7 @@ percolates up through the stack:
 s, err := store.New()
 if err != nil {
     return fmt.Errorf(
-        "failed to create new store: %v", err)
+        "failed to create new store: %w", err)
 }
 ```
 
@@ -1016,11 +1007,11 @@ if err != nil {
 s, err := store.New()
 if err != nil {
     return fmt.Errorf(
-        "new store: %v", err)
+        "new store: %w", err)
 }
 ```
 
-<tr><td>
+</td></tr><tr><td>
 
 ```
 failed to x: failed to y: failed to create new store: the error
@@ -1042,6 +1033,59 @@ See also [Don't just check errors, handle them gracefully].
 
   [`"pkg/errors".Cause`]: https://godoc.org/github.com/pkg/errors#Cause
   [Don't just check errors, handle them gracefully]: https://dave.cheney.net/2016/04/27/dont-just-check-errors-handle-them-gracefully
+
+#### Error Naming
+
+For error values stored as global variables,
+use the prefix `Err` or `err` depending on whether they're exported.
+This guidance supersedes the [Prefix Unexported Globals with _](#prefix-unexported-globals-with-_).
+
+```go
+var (
+  // The following two errors are exported
+  // so that users of this package can match them
+  // with errors.Is.
+
+  ErrBrokenLink = errors.New("link is broken")
+  ErrCouldNotOpen = errors.New("could not open")
+
+  // This error is not exported because
+  // we don't want to make it part of our public API.
+  // We may still use it inside the package
+  // with errors.Is.
+
+  errNotFound = errors.New("not found")
+)
+```
+
+For custom error types, use the suffix `Error` instead.
+
+```go
+// Similarly, this error is exported
+// so that users of this package can match it
+// with errors.As.
+
+type NotFoundError struct {
+  File string
+}
+
+func (e *NotFoundError) Error() string {
+  return fmt.Sprintf("file %q not found", e.File)
+}
+
+// And this error is not exported because
+// we don't want to make it part of the public API.
+// We can still use it inside the package
+// with errors.As.
+
+type resolveError struct {
+  Path string
+}
+
+func (e *resolveError) Error() string {
+  return fmt.Sprintf("resolve %q", e.Path)
+}
+```
 
 ### Handle Type Assertion Failures
 
@@ -1517,6 +1561,7 @@ func (f Foo) String() string {
     return f.str
 }
 ```
+
 </td></tr>
 </tbody></table>
 
@@ -1866,7 +1911,7 @@ for i := 0; i < b.N; i++ {
 }
 ```
 
-</tr>
+</td></tr>
 <tr><td>
 
 ```
@@ -2003,6 +2048,16 @@ BenchmarkGood-4   100000000    0.21s
 </tbody></table>
 
 ## Style
+
+### Avoid overly long lines
+
+Avoid lines of code that require readers to scroll horizontally
+or turn their heads too much.
+
+We recommend a soft line length limit of **99 characters**.
+Authors should aim to wrap lines before hitting this limit,
+but it is not a hard limit.
+Code is allowed to exceed this limit.
 
 ### Be Consistent
 
@@ -2501,9 +2556,12 @@ const (
 </td></tr>
 </tbody></table>
 
+**Exception**: Unexported error values may use the prefix `err` without the underscore.
+See [Error Naming](#error-naming).
+
 ### Embedding in Structs
 
-Embedded types (such as mutexes) should be at the top of the field list of a
+Embedded types should be at the top of the field list of a
 struct, and there must be an empty line separating embedded fields from regular
 fields.
 
@@ -2536,7 +2594,10 @@ Embedding should provide tangible benefit, like adding or augmenting
 functionality in a semantically-appropriate way. It should do this with zero
 adverse user-facing effects (see also: [Avoid Embedding Types in Public Structs]).
 
+Exception: Mutexes should not be embedded, even on unexported types. See also: [Zero-value Mutexes are Valid].
+
   [Avoid Embedding Types in Public Structs]: #avoid-embedding-types-in-public-structs
+  [Zero-value Mutexes are Valid]: #zero-value-mutexes-are-valid
 
 Embedding **should not**:
 
