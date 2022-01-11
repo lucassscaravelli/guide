@@ -63,8 +63,10 @@ row before the </tbody></table> line.
   - [Tamanho no canal é um ou nenhum](#tamanho-no-canal-é-um-ou-nenhum)
   - [Iniciar enums em um](#iniciar-enums-em-um)
   - [Utilizar `"time"` para lidar com tempo](#utilizar-"time"-para-lidar-com-tempo)
-  - [Tipo Erros](#tipo-erros)
-  - [Utilizando Error Wrapping](#utilizando-error-wrapping)
+  - [Erros](#erros)
+    - [Tipos de erro](#tipos-de-erro)
+    - [Utilizando Error Wrapping](#utilizando-error-wrapping)
+    - [Nomeando erros](#nomeando-erros)
   - [Manipular falhas de asserção de tipo](#manipular-falhas-de-asserção-de-tipo)
   - [Não utilize panic](#não-utilize-panic)
   - [Utilize go.uber.org/atomic](#utilize-gouberorgatomic)
@@ -733,7 +735,9 @@ Embora isto tenda a não ser um problema na prática, tenha em mente que o pacot
 
 <!-- TODO: seção sobre métodos de string para enumerações -->
 
-### Tipo Erros
+### Erros
+
+#### Tipo Erros
 
 Existem várias opções para declarar erros:
 
@@ -894,26 +898,160 @@ if err := foo.Open("foo"); err != nil {
   }
 }
 ```
+#### Tipos de erro
 
-<!-- TODO: Expondo as informações aos chamadores com funções de acessador. -->
+Existem poucas maneiras de declarar erros.
+Considere as seguintes informações antes de escolher a opção mais adequada para o seu caso de uso.
 
-### Utilizando Error Wrapping
+- O _caller_ (código que consumirá o erro) necessita identificar o erro para lidar com isso?
+  Se sim, é necessário suportar as funções [`errors.Is`] ou [`errors.As`] através da declaração _top-level_ da váriavel de erro ou tipo customizado.
+- O erro é uma mensagem _string_ estática ou é uma mensagem dinâmica que necessita informações contextuais?
+  No primeiro caso, podemos utilizar [`errors.New`] e no segundo devemos utilizar [`fmt.Errorf`] ou um tipo customizado de erro.
+- Esta propagando um novo erro retornado através de uma outra função?
+  Se sim, veja [seção de error wrapping](#utilizando-error-wrapping).
+
+[`errors.Is`]: https://golang.org/pkg/errors/#Is
+[`errors.As`]: https://golang.org/pkg/errors/#As
+
+|Identificar Erro?|Tipo de mensagem| Guidance                            |
+|-----------------|---------------|-------------------------------------|
+| Não              | estática        | [`errors.New`]                      |
+| Não              | dinâmica       | [`fmt.Errorf`]                      |
+| Sim             | estática        | `var` _top-level_ utilizando [`errors.New`] |
+| Sim             | dinâmica       | Tipo de erro customizado           |
+
+[`errors.New`]: https://golang.org/pkg/errors/#New
+[`fmt.Errorf`]: https://golang.org/pkg/fmt/#Errorf
+
+Por exemplo, utilize [`errors.New`] para um erro com _string_ estática.
+Exporte esse erro como variável para suportar sua identificação (_matching_) com a função `errors.Is`se o _caller_ precisa identificar e lidar com esse erro.
+
+<table>
+<thead><tr><th>Sem identificação do erro</th><th>Com identificação do erro</th></tr></thead>
+<tbody>
+<tr><td>
+
+```go
+// package foo
+
+func Open() error {
+  return errors.New("could not open")
+}
+
+// package bar
+
+if err := foo.Open(); err != nil {
+  // Can't handle the error.
+  panic("unknown error")
+}
+```
+
+</td><td>
+
+```go
+// package foo
+
+var ErrCouldNotOpen = errors.New("could not open")
+
+func Open() error {
+  return ErrCouldNotOpen
+}
+
+// package bar
+
+if err := foo.Open(); err != nil {
+  if errors.Is(err, foo.ErrCouldNotOpen) {
+    // handle the error
+  } else {
+    panic("unknown error")
+  }
+}
+```
+Para um erro com _string_ dinâmico utilize [`fmt.Errorf`] se o _caller_ não precisa identificá-lo, e um `error` customizado se o _caller_ precisa identificá-lo.
+
+</td></tr>
+</tbody></table>
+
+<table>
+<thead><tr><th>Sem identificação do erro</th><th>Com identificação do erro</th></tr></thead>
+<tbody>
+<tr><td>
+
+```go
+// package foo
+
+func Open(file string) error {
+  return fmt.Errorf("file %q not found", file)
+}
+
+// package bar
+
+if err := foo.Open("testfile.txt"); err != nil {
+  // Can't handle the error.
+  panic("unknown error")
+}
+```
+
+</td><td>
+
+```go
+// package foo
+
+type NotFoundError struct {
+  File string
+}
+
+func (e *NotFoundError) Error() string {
+  return fmt.Sprintf("file %q not found", e.File)
+}
+
+func Open(file string) error {
+  return &NotFoundError{File: file}
+}
+
+
+// package bar
+
+if err := foo.Open("testfile.txt"); err != nil {
+  var notFound *NotFoundError
+  if errors.As(err, &notFound) {
+    // handle the error
+  } else {
+    panic("unknown error")
+  }
+}
+```
+
+</td></tr>
+</tbody></table>
+
+Observe que se você exportar variáveis ou tipos de erro de um pacote,
+eles se tornarão parte da API pública do pacote.
+
+#### Utilizando Error Wrapping
 
 Existem três opções principais para propagar erros se uma chamada falhar:
 
 - Retorne o erro original se não houver contexto adicional a ser adicionado e você
   deseja manter o tipo de erro original.
-- Adicione o contexto usando [`" pkg / errors ".Wrap`] para que a mensagem de erro forneça
-  mais contexto e [`" pkg / errors ".Cause`] podem ser usados para extrair o erro original.
-- Use [`fmt.Errorf`] se quem for chamar a função não precisa detectar ou manipular um
-  caso de erro específico.
+- Adicione o contexto utilizando `fmt.Errorf` e a diretiva `%w`
+- Adicione o contexto utilizando `fmt.Errorf` e a diretiva `%v`
 
-Recomenda-se adicionar o contexto sempre que possível, para que, em vez de um
-erro como "conexão recusada", você obtém erros mais úteis, como
-"chamar serviço foo: conexão recusada.
+Retornando o erro original (nativo - _as-is_) se não há contexto adicional para adicionar.
+Isso mantém o tipo e messagem do erro original.
+Isso é adequado para casos em que a mensagem de erro subjacente tem informações suficientes para permitir o rastreio (_tracking_).
 
-Ao adicionar contexto aos erros retornados, mantenha o contexto sucinto, evitando
-frases como "falhou", que afirmam o óbvio e se acumulam na pilha de erro.
+Caso contrário, adicione contexto à mensagem de erro sempre que possível para que, em vez de um erro vago como "conexão recusada", você obtém erros mais úteis, como "chamar serviço foo: conexão recusada".
+
+Utilize `fmt.Errorf` para adicionar contexto nos erros, escolhendo entre as diretivas `%w` ou `%v`
+baseado em que o _caller_ deveria identificar e extrair a causa subjacente.
+
+- Utilize `%w` se o _caller_ deveria ter acesso ao erro subjacente.
+  Isso é um bom padrão para a maioria dos erros _wrapped_, mas esteja ciente que os _callers_ podem confiar nesse comportamento.
+  Então nos casos quando o erro _wrapped_ é uma `var` ou tipo conhecido, documente e teste isso como parte da sua função.
+- Utilize `%v` para ofuscar o erro adjacente. Os _callers_ não vão conseguir identificar ele. Mas se você pode alterar para `%w` no futuro se for necessário.
+
+Ao adicionar contexto nos erros retornados, mantenha-o sucinto evitando frases como "falha ao"(_failed to_), o qual é um estado óbvio se acumulam através da _stack_ de erro.
 
 <table>
 <thead><tr><th>Ruim</th><th>Bom</th></tr></thead>
@@ -960,6 +1098,60 @@ Veja também [Don't just check errors, handle them gracefully].
 
 [`"pkg/errors".Cause`]: https://godoc.org/github.com/pkg/errors#Cause
 [Don't just check errors, handle them gracefully]: https://dave.cheney.net/2016/04/27/dont-just-check-errors-handle-them-gracefully
+
+#### Nomeando erros
+
+Para valores de errors definidos como variáveis globais, use o prefixo `Err`ou `err` dependendo se eles são exportados. 
+Esta orientação substitui a [Utilize o prefixo _ para globais não exportados](#utilize-o-prefixo-_-para-globais-não-exportados)
+
+```go
+var (
+  // Os erros abaixo são exportados, sendo assim
+  // os usuários deste pacote conseguem
+  // identificá-los (comparar) com errors.Is.
+
+  ErrBrokenLink = errors.New("link is broken")
+  ErrCouldNotOpen = errors.New("could not open")
+
+  // Este erro não é exportado porque não
+  // queremos que ele seja parte da nossa API
+  // pública.
+  // Ainda podemos utilizar ele dentro do pacote
+  // chamando errors.Is.
+
+  errNotFound = errors.New("not found")
+)
+```
+
+Para tipos de erros customizados, utilize o sufixo `Erro`.
+
+```go
+// De forma similar, esse erro é exportado
+// então os usuários do pacote conseguem
+// identificar (comparar) com errors.As.
+
+type NotFoundError struct {
+  File string
+}
+
+func (e *NotFoundError) Error() string {
+  return fmt.Sprintf("file %q not found", e.File)
+}
+
+// Este erro não é exportado porque não
+// queremos que ele seja parte da nossa API
+// pública.
+// Ainda podemos utilizar ele dentro do pacote
+// chamando errors.As.
+
+type resolveError struct {
+  Path string
+}
+
+func (e *resolveError) Error() string {
+  return fmt.Sprintf("resolve %q", e.Path)
+}
+```
 
 ### Manipular falhas de asserção de tipo
 
