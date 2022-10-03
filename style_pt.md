@@ -55,22 +55,36 @@ row before the </tbody></table> line.
 - [Introdução](#introdução)
 - [Diretrizes](#diretrizes)
   - [Ponteiros para interfaces](#ponteiros-para-interfaces)
+  - [Verificar compatibilidade de interface](#verificar-compatibilidade-de-interface)
   - [Receptores e Interfaces](#receptores-e-interfaces)
   - [Mutexes com valor zero são validos](#mutexes-com-valor-zero-são-validos)
   - [Copiar slices e mapas com limites](#copiar-slices-e-mapas-com-limites)
   - [Defer para "limpar"](#defer-para-limpar)
   - [Tamanho no canal é um ou nenhum](#tamanho-no-canal-é-um-ou-nenhum)
   - [Iniciar enums em um](#iniciar-enums-em-um)
-  - [Tipo Erros](#tipo-erros)
-  - [Utilizando Error Wrapping](#utilizando-error-wrapping)
+  - [Utilize `"time` para manipular datas](utilize-time-para-manipular-datas)
+  - [Erros](#erros)
+    - [Tipos de erros](#tipo-de-erros)
+    - [Wrapping de erros](#wrapping-de-erros)
+    - [Nomeação de erros](#nomeação-de-erros)
   - [Manipular falhas de asserção de tipo](#manipular-falhas-de-asserção-de-tipo)
   - [Não utilize panic](#não-utilize-panic)
   - [Utilize go.uber.org/atomic](#utilize-gouberorgatomic)
+  - [Evite globais mutáveis](#evite-globais-mutáveis)
+  - [Evite tipos encapsulados em structs publicas](#evite-tipos-encapsulados-em-structs-publicas)
+  - [Evite usar nomes Built-In][#evite-usar-nomes-built-in]
+  - [Evite usar `init()`][#evite-usar-init]
+  - [Encerre seu programa na main()][#encerre-seu-programa-na-main]
+    - [Encerre apenas uma vez][#encerre-apenas-uma-vez]
+  - [Use tags nos campos de marshaled structs](#use-tags-nos-campos-de-marshaled-structs)
 - [Performance](#performance)
   - [Utilize strconv ao invés de fmt](#utilize-strconv-ao-invés-de-fmt)
   - [Evite a conversão de string para byte](#evite-a-conversao-de-string-para-byte)
-  - [Utilize tamanho ao criar mapas](#utilize-tamanho-ao-criar-mapas)
+  - [Especifique a capacidade de variáveis](#especifique-a-capacidade-das-variáveis)
+    - [Especifique a capacidade de mapas](#especifique-a-capacidade-de-mapas)
+    - [Especifique a capacidade de slices](#especifique-a-capacidade-de-slices)
 - [Estilo](#estilo)
+  - [Evite linhas longas](#evite-linhas-longas)
   - [Seja consistente](#seja-consistente)
   - [Agrupar declarações similares](#agrupar-declarações-similares)
   - [Ordenação e agrupamento de imports](#ordenação-e-agrupamento-de-imports)
@@ -80,22 +94,26 @@ row before the </tbody></table> line.
   - [Agrupamento e ordenação de funções](#agrupamento-e-ordenação-de-funções)
   - [Reduzir o aninhamento](#reduzir-o-aninhamento)
   - [Else desnecessário](#else-desnecessário)
-  - [Declaração de variavéis top-level](#declaração-de-variavéis-top-level)
   - [Utilize o prefixo _ para globais não exportados](#utilize-o-prefixo-_-para-globais-não-exportados)
-  - [Tipos embutidos em structs](#tipos_embutidos_em_structs)
-  - [Utilize nome dos campos para inicializar uma struct](#utilize-nome-dos-campos-para-inicializar-uma-struct)
+  - [Declaração de variavéis top-level](#declaração-de-variavéis-top-level)
+  - [Tipos encapsulados em structs](#tipos-encapsulados-em-structs)
   - [Declaração de variáveis locais](#declaração-de-variáveis-locais)
   - [Nil é um slice válido](#nil-é-um-slice-válido)
   - [Reduzir o escopo das váriaveis](#reduzir-o-escopo-das-váriaveis)
   - [Evitar passar parâmetros sem identificação](#evitar-passar-parâmetros-sem-identificação)
   - [Use strings literais para evitar escape](#use-strings-literais-para-evitar-escape)
-  - [Inicializando referências de structs](#inicializando-referências-de-structs)
+  - [Inicializando structs](#inicializando-structs)
+    - [Utilize nome dos campos para inicializar uma struct](#utilize-nome-dos-campos-para-inicializar-uma-struct)
+    - [Omita valor zero dos campos de uma struct](#omita-valor-zero-dos-campos-de-uma-struct)
+    - [Utilize `var` para structs de valor zero](#utilize-var-para-structs-de-valor-zero)
+    - [Inicializando referências de structs](#inicializando-referências-de-structs)
   - [Inicializando mapas](#inicializando-mapas)
   - [Formate strings fora da função Printf](#formate-strings-fora-da-função-printf)
   - [Nomeando funções da família Printf](#nomeando-funções-da-família-printf)
 - [Patterns](#patterns)
   - [Test Tables](#test-tables)
   - [Functional Options](#functional-options)
+- [Linting](#linting)
 
 ## Introdução
 
@@ -111,14 +129,17 @@ Este guia foi criado originalmente por [Prashant Varanasi] e [Simon Newton] como
 Este guia documenta as convenções idiomáticas no código Go que seguimos no Uber. Muitas delas são diretrizes gerais para o Go, enquanto outras se estendem a recursos externos:
 
 1. [Effective Go](https://golang.org/doc/effective_go.html)
-2. [The Go common mistakes guide](https://github.com/golang/go/wiki/CodeReviewComments)
+2. [Go Common Mistakes](https://github.com/golang/go/wiki/CommonMistakes)
+3. [Go Code Review Comments](https://github.com/golang/go/wiki/CodeReviewComments)
+
+Nos temos como objetivo que os exemplos de código estejam corretos para as duas [versões](https://go.dev/doc/devel/release) "minor" do Go mais recentes.
 
 Todo o código deve estar livre de erros ao executar o golint e go vet. Recomendamos configurar seu editor para:
 
 - Executar `goimports` ao salvar
 - Executar `golint` and `go vet` para verificar se há erros
 
-Você pode encontrar informações no suporte do editor para as ferramentas Go aqui: https://github.com/golang/go/wiki/IDEsAndTextEditorPlugins
+Você pode encontrar informações no suporte do editor para as ferramentas Go aqui: <https://github.com/golang/go/wiki/IDEsAndTextEditorPlugins>
 
 ## Diretrizes
 
@@ -126,15 +147,88 @@ Você pode encontrar informações no suporte do editor para as ferramentas Go a
 
 Você quase nunca precisa de um ponteiro para uma interface. Você deve passar interfaces como valores pois quando a mesma for implementada, ainda pode ser um ponteiro.
 
-1. Uma interface é divida em dois campos:
+Uma interface é divida em dois campos:
 
-2. Um ponteiro para algum tipo específico.
+1. Um ponteiro para algum tipo específico.
+2. Um ponteiro para algum dado. Se este dado é um valor, então o ponteiro para o valor é armazenado.
 
 Se você deseja que os métodos da interface modifiquem os dados que a mesma possuirá, use um ponteiro.
 
+### Verificar compatibilidade de interface
+
+Verificar a compatibilidade de interface em tempo de compilação é apropriado. Isso inclui:
+
+- Tipos exportados que necessitam implementar uma interface específica como parte do contrato de sua API
+- Tipos exportados ou não exportados que são parte de uma coleção de outros tipos implementando a mesma interface
+- Outro caso que ao violar a interface irá afetar usários.
+
+<table>
+<thead><tr><th>Ruim</th><th>Bom</th></tr></thead>
+<tbody>
+<tr><td>
+
+```go
+type Handler struct {
+  // ...
+}
+
+
+
+func (h *Handler) ServeHTTP(
+  w http.ResponseWriter,
+  r *http.Request,
+) {
+  ...
+}
+```
+
+</td><td>
+
+```go
+type Handler struct {
+  // ...
+}
+
+var _ http.Handler = (*Handler)(nil)
+
+func (h *Handler) ServeHTTP(
+  w http.ResponseWriter,
+  r *http.Request,
+) {
+  // ...
+}
+```
+
+</td></tr>
+</tbody></table>
+
+A instrução `var _ http.Handler = (*Handler)(nil)` não irá compilar se `*Handler` não for mais compatível com a interface `http.Handler`.
+
+A atribuição dessa variável deve ser um valor zero do tipo verificado. Isto significa `nil` para tipo de ponteiros como `*Handler`, slices e mapas. E uma struct vazia para tipos de structs.
+
+```go
+type LogHandler struct {
+  h   http.Handler
+  log *zap.Logger
+}
+
+var _ http.Handler = LogHandler{}
+
+func (h LogHandler) ServeHTTP(
+  w http.ResponseWriter,
+  r *http.Request,
+) {
+  // ...
+}
+```
+
 ### Receptores e Interfaces
 
-Métodos com valores receptores podem ser chamados tanto como ponteiros ou como valores.
+Métodos com receptores de valores podem ser chamados tanto como ponteiros ou como valores.
+
+Métodos com receptores de ponteiros só podem ser chamados como ponteiros ou [addressable values].
+
+  [addressable values]: https://golang.org/ref/spec#Method_values
 
 Por exemplo:
 
@@ -222,28 +316,27 @@ mu.Lock()
 </td></tr>
 </tbody></table>
 
-Se você usa uma estrutura a partir de um ponteiro, o mutex pode ser um "acesso sem ponteiro" 
-
-Structs privadas que utilizam um mutex para proteger algum campo, devem utilizar o mutex de forma "embutida".
+Se você usa uma estrutura a partir de um ponteiro, o mutex pode ser um "acesso sem ponteiro". Não use um mutex como campo encapsulado em uma struct, mesmo se a mesma não é exportada.
 
 <table>
+<thead><tr><th>Ruim</th><th>Bom</th></tr></thead>
 <tbody>
 <tr><td>
 
 ```go
-type smap struct {
-  sync.Mutex // only for unexported types
+type SMap struct {
+  sync.Mutex
 
   data map[string]string
 }
 
-func newSMap() *smap {
-  return &smap{
+func NewSMap() *SMap {
+  return &SMap{
     data: make(map[string]string),
   }
 }
 
-func (m *smap) Get(k string) string {
+func (m *SMap) Get(k string) string {
   m.Lock()
   defer m.Unlock()
 
@@ -276,12 +369,15 @@ func (m *SMap) Get(k string) string {
 
 </td></tr>
 
-</tr>
-<tr>
-<td>Uso embutido para structs que precisam de um mutex embutido.</td>
-<td>Para tipos exportados, utilize um campo privado.</td>
-</tr>
+<tr><td>
 
+O campo `Mutext` e os métodos `Lock` e `Unlock` são partes (sem intenção) de uma API exportada de `SMap`.
+
+</td><td>
+
+O mutex e seus métodos são detalhes de implementação de `SMap` escondidos de sua API.
+
+</td></tr>
 </tbody></table>
 
 ### Copiar slices e mapas com limites
@@ -512,7 +608,7 @@ const (
 // LogToStdout=0, LogToFile=1, LogToRemote=2
 ```
 
-<!-- TODO: seção sobre métodos de string para enumerações -->
+### Marcador para continuar a tradução :P
 
 ### Tipo Erros
 
