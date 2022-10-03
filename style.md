@@ -76,6 +76,7 @@ row before the </tbody></table> line.
   - [Avoid `init()`](#avoid-init)
   - [Exit in Main](#exit-in-main)
     - [Exit Once](#exit-once)
+  - [Use field tags in marshaled structs](#use-field-tags-in-marshaled-structs)
 - [Performance](#performance)
   - [Prefer strconv over fmt](#prefer-strconv-over-fmt)
   - [Avoid string-to-byte conversion](#avoid-string-to-byte-conversion)
@@ -139,6 +140,9 @@ resources:
 1. [Effective Go](https://golang.org/doc/effective_go.html)
 2. [Go Common Mistakes](https://github.com/golang/go/wiki/CommonMistakes)
 3. [Go Code Review Comments](https://github.com/golang/go/wiki/CodeReviewComments)
+
+We aim for the code samples to be accurate for the two most recent minor versions
+of Go [releases](https://go.dev/doc/devel/release).
 
 All code should be error-free when run through `golint` and `go vet`. We
 recommend setting up your editor to:
@@ -1186,7 +1190,7 @@ test is marked as failed.
 ```go
 // func TestFoo(t *testing.T)
 
-f, err := ioutil.TempFile("", "test")
+f, err := os.CreateTemp("", "test")
 if err != nil {
   panic("failed to set up test")
 }
@@ -1197,7 +1201,7 @@ if err != nil {
 ```go
 // func TestFoo(t *testing.T)
 
-f, err := ioutil.TempFile("", "test")
+f, err := os.CreateTemp("", "test")
 if err != nil {
   t.Fatal("failed to set up test")
 }
@@ -1643,7 +1647,7 @@ func init() {
     cwd, _ := os.Getwd()
 
     // Bad: I/O
-    raw, _ := ioutil.ReadFile(
+    raw, _ := os.ReadFile(
         path.Join(cwd, "config", "config.yaml"),
     )
 
@@ -1662,7 +1666,7 @@ func loadConfig() Config {
     cwd, err := os.Getwd()
     // handle err
 
-    raw, err := ioutil.ReadFile(
+    raw, err := os.ReadFile(
         path.Join(cwd, "config", "config.yaml"),
     )
     // handle err
@@ -1715,7 +1719,7 @@ func readFile(path string) string {
     log.Fatal(err)
   }
 
-  b, err := ioutil.ReadAll(f)
+  b, err := io.ReadAll(f)
   if err != nil {
     log.Fatal(err)
   }
@@ -1741,7 +1745,7 @@ func readFile(path string) (string, error) {
     return "", err
   }
 
-  b, err := ioutil.ReadAll(f)
+  b, err := io.ReadAll(f)
   if err != nil {
     return "", err
   }
@@ -1797,7 +1801,7 @@ func main() {
   // If we call log.Fatal after this line,
   // f.Close will not be called.
 
-  b, err := ioutil.ReadAll(f)
+  b, err := io.ReadAll(f)
   if err != nil {
     log.Fatal(err)
   }
@@ -1830,7 +1834,7 @@ func run() error {
   }
   defer f.Close()
 
-  b, err := ioutil.ReadAll(f)
+  b, err := io.ReadAll(f)
   if err != nil {
     return err
   }
@@ -1841,6 +1845,54 @@ func run() error {
 
 </td></tr>
 </tbody></table>
+
+### Use field tags in marshaled structs
+
+Any struct field that is marshaled into JSON, YAML,
+or other formats that support tag-based field naming
+should be annotated with the relevant tag.
+
+<table>
+<thead><tr><th>Bad</th><th>Good</th></tr></thead>
+<tbody>
+<tr><td>
+
+```go
+type Stock struct {
+  Price int
+  Name  string
+}
+
+bytes, err := json.Marshal(Stock{
+  Price: 137,
+  Name:  "UBER",
+})
+```
+
+</td><td>
+
+```go
+type Stock struct {
+  Price int    `json:"price"`
+  Name  string `json:"name"`
+  // Safe to rename Name to Symbol.
+}
+
+bytes, err := json.Marshal(Stock{
+  Price: 137,
+  Name:  "UBER",
+})
+```
+
+</td></tr>
+</tbody></table>
+
+Rationale:
+The serialized form of the structure is a contract between different systems.
+Changes to the structure of the serialized form--including field names--break
+this contract. Specifying field names inside tags makes the contract explicit,
+and it guards against accidentally breaking the contract by refactoring or
+renaming fields.
 
 ## Performance
 
@@ -1959,7 +2011,7 @@ map, even up to the specified capacity.
 ```go
 m := make(map[string]os.FileInfo)
 
-files, _ := ioutil.ReadDir("./files")
+files, _ := os.ReadDir("./files")
 for _, f := range files {
     m[f.Name()] = f
 }
@@ -1969,9 +2021,9 @@ for _, f := range files {
 
 ```go
 
-files, _ := ioutil.ReadDir("./files")
+files, _ := os.ReadDir("./files")
 
-m := make(map[string]os.FileInfo, len(files))
+m := make(map[string]os.DirEntry, len(files))
 for _, f := range files {
     m[f.Name()] = f
 }
@@ -2195,11 +2247,11 @@ inside of functions.
 
 ```go
 func f() string {
-  var red = color.New(0xff0000)
-  var green = color.New(0x00ff00)
-  var blue = color.New(0x0000ff)
+  red := color.New(0xff0000)
+  green := color.New(0x00ff00)
+  blue := color.New(0x0000ff)
 
-  ...
+  // ...
 }
 ```
 
@@ -2213,7 +2265,45 @@ func f() string {
     blue  = color.New(0x0000ff)
   )
 
-  ...
+  // ...
+}
+```
+
+</td></tr>
+</tbody></table>
+
+Exception: Variable declarations, particularly inside functions, should be
+grouped together if declared adjacent to other variables. Do this for variables
+declared together even if they are unrelated.
+
+<table>
+<thead><tr><th>Bad</th><th>Good</th></tr></thead>
+<tbody>
+<tr><td>
+
+```go
+func (c *client) request() {
+  caller := c.name
+  format := "json"
+  timeout := 5*time.Second
+  var err error
+
+  // ...
+}
+```
+
+</td><td>
+
+```go
+func (c *client) request() {
+  var (
+    caller  = c.name
+    format  = "json"
+    timeout = 5*time.Second
+    err error
+  )
+
+  // ...
 }
 ```
 
@@ -2510,8 +2600,6 @@ var _e error = F()
 
 Prefix unexported top-level `var`s and `const`s with `_` to make it clear when
 they are used that they are global symbols.
-
-Exception: Unexported error values, which should be prefixed with `err`.
 
 Rationale: Top-level variables and constants have a package scope. Using a
 generic name makes it easy to accidentally use the wrong value in a different
@@ -2886,7 +2974,7 @@ conflicts with [Reduce Nesting](#reduce-nesting).
 <tr><td>
 
 ```go
-err := ioutil.WriteFile(name, data, 0644)
+err := os.WriteFile(name, data, 0644)
 if err != nil {
  return err
 }
@@ -2895,7 +2983,7 @@ if err != nil {
 </td><td>
 
 ```go
-if err := ioutil.WriteFile(name, data, 0644); err != nil {
+if err := os.WriteFile(name, data, 0644); err != nil {
  return err
 }
 ```
@@ -2912,7 +3000,7 @@ try to reduce the scope.
 <tr><td>
 
 ```go
-if data, err := ioutil.ReadFile(name); err == nil {
+if data, err := os.ReadFile(name); err == nil {
   err = cfg.Decode(data)
   if err != nil {
     return err
@@ -2928,7 +3016,7 @@ if data, err := ioutil.ReadFile(name); err == nil {
 </td><td>
 
 ```go
-data, err := ioutil.ReadFile(name)
+data, err := os.ReadFile(name)
 if err != nil {
    return err
 }
@@ -3404,6 +3492,33 @@ for _, tt := range tests {
   // ...
 }
 ```
+
+Parallel tests, like some specialized loops (for example, those that spawn
+goroutines or capture references as part of the loop body),
+must take care to explicitly assign loop variables within the loop's scope to
+ensure that they hold the expected values.
+
+```go
+tests := []struct{
+  give string
+  // ...
+}{
+  // ...
+}
+
+for _, tt := range tests {
+  tt := tt // for t.Parallel
+  t.Run(tt.give, func(t *testing.T) {
+    t.Parallel()
+    // ...
+  })
+}
+```
+
+In the example above, we must declare a `tt` variable scoped to the loop
+iteration because of the use of `t.Parallel()` below.
+If we do not do that, most or all tests will receive an unexpected value for
+`tt`, or a value that changes as they're running.
 
 ### Functional Options
 
