@@ -62,7 +62,7 @@ row before the </tbody></table> line.
   - [Defer para "limpar"](#defer-para-limpar)
   - [Tamanho no canal é um ou nenhum](#tamanho-no-canal-é-um-ou-nenhum)
   - [Iniciar enums em um](#iniciar-enums-em-um)
-  - [Utilize `"time` para manipular datas](utilize-time-para-manipular-datas)
+  - [Utilize `"time"` para manipular datas](utilize-time-para-manipular-datas)
   - [Erros](#erros)
     - [Tipos de erros](#tipo-de-erros)
     - [Wrapping de erros](#wrapping-de-erros)
@@ -608,33 +608,180 @@ const (
 // LogToStdout=0, LogToFile=1, LogToRemote=2
 ```
 
-### Marcador para continuar a tradução :P
+### Utilize `"time"` para manipular datas
 
-### Tipo Erros
+Tempo é complicado. Suposições incorretas são frequentemente feitas sobre tempo, incluindo as seguintes:
 
-Existem várias opções para declarar erros:
+1. Um dia tem 24 horas.
+2. Uma hora tem 60 minutos.
+3. Uma semana tem 7 dias.
+4. Um ano tem 365 dias.
 
-- [`errors.New`] para erros formados por simples strings estáticos
-- [`fmt.Errorf`] para erros com strings formatados
-- Tipos customizados que implemetam o método `Error()`
-- Erros "wrapped" utilizando [`"pkg/errors".Wrap`]
+Por exemplo, o item *1* significa que adicionando 24 horas em um instante de tempo nem sempre irá produzir um novo dia de calendário.
 
-Ao retornar erros, considere o seguinte para determinar a melhor opção:
+Portanto, sempre use o pacote `"time"` quando manipular tempo pois o mesmo ajuda lidar com essas suposições incorretas de uma maneira mais segura e precisa.
 
-- Este é um erro simples que não precisa de informações extras? Nesse caso, [`errors.New`] deve ser suficiente.
-- Os clientes precisam detectar e manipular esse erro? Nesse caso, você deve usar um tipo personalizado, utilize o método `Error ()`.
-- Você está propagando um erro retornado por uma função downstream? Se sim, verifique o tópico [Utilizando Error Wrapping](utilizando-error-wrapping).
-- Para outros casos, [`fmt.Errorf`] esta ok.
-
-  [`errors.New`]: https://golang.org/pkg/errors/#New
-  [`fmt.Errorf`]: https://golang.org/pkg/fmt/#Errorf
-  [`"pkg/errors".Wrap`]: https://godoc.org/github.com/pkg/errors#Wrap
-
-Se o cliente precisar detectar o erro e você tiver criado um erro simples
-usando [`errors.New`], use uma var para o erro.
+  [`"time"`]: https://golang.org/pkg/time/
 
 <table>
 <thead><tr><th>Ruim</th><th>Bom</th></tr></thead>
+<tbody>
+<tr><td>
+
+```go
+func isActive(now, start, stop int) bool {
+  return start <= now && now < stop
+}
+```
+
+</td><td>
+
+```go
+func isActive(now, start, stop time.Time) bool {
+  return (start.Before(now) || start.Equal(now)) && now.Before(stop)
+}
+```
+
+</td></tr>
+</tbody></table>
+
+#### Utilize `"time.Duration" para períodos de tempo
+
+Utilize [`time.Duration`] quando manipular com períodos de tempo.
+
+  [`time.Duration`]: https://golang.org/pkg/time/#Duration
+
+<table>
+<thead><tr><th>Ruim</th><th>Bom</th></tr></thead>
+<tbody>
+<tr><td>
+
+```go
+func poll(delay int) {
+  for {
+    // ...
+    time.Sleep(time.Duration(delay) * time.Millisecond)
+  }
+}
+
+poll(10) // se trata de segundos ou milisegundos?
+```
+
+</td><td>
+
+```go
+func poll(delay time.Duration) {
+  for {
+    // ...
+    time.Sleep(delay)
+  }
+}
+
+poll(10*time.Second)
+```
+
+</td></tr>
+</tbody></table>
+
+Retomando ao exemplo de adicionar 24 horas para um instante de tempo, o método que nós utilizamos para adicionar tempo depende da intenção. Se nos precisamos do mesmo tempo do dia, porém no próximo dia do calendário, nós deveriamos utilizar [`Time.AddDate`]. Entretanto, se nós queremos garantir um instante de tempo que seja 24 horas depois do tempo anterior, nos deveriamos utilizar [`Time.Add`].
+
+  [`Time.AddDate`]: https://golang.org/pkg/time/#Time.AddDate
+  [`Time.Add`]: https://golang.org/pkg/time/#Time.Add
+
+```go
+newDay := t.AddDate(0 /* years */, 0 /* months */, 1 /* days */)
+maybeN
+```
+
+#### Utilize `time.time` e `time.Duration` com sistemas externos
+
+Utilize `time.time` e `time.Duration` em interações com sistemas externos quando for possível. Por exemplo:
+
+- Flags de linha de comandos: o pacote [`flag`] suporta `time.Duration` via
+  [`time.ParseDuration`]
+- JSON: o pacote [`encoding/json`] suporta codificação `time.Time` no formato string [RFC 3339] através do seu método [`UnmarshalJSON`]
+- SQL: o pacote [`database/sql`] suporta conversão de colunas `DATETIME` ou `TIMESTAMP` para `time.Time` e vice-versa se o driver interno utilizado suportar isto.
+- YAML: o pacote [`gopkg.in/yaml.v2`] suporta `time.Time` no formato string [RFC 3339] e `time.Duration` via [`time.ParseDuration`].
+
+  [`flag`]: https://golang.org/pkg/flag/
+  [`time.ParseDuration`]: https://golang.org/pkg/time/#ParseDuration
+  [`encoding/json`]: https://golang.org/pkg/encoding/json/
+  [RFC 3339]: https://tools.ietf.org/html/rfc3339
+  [`UnmarshalJSON`]: https://golang.org/pkg/time/#Time.UnmarshalJSON
+  [`database/sql`]: https://golang.org/pkg/database/sql/
+  [`gopkg.in/yaml.v2`]: https://godoc.org/gopkg.in/yaml.v2
+
+Quando não é possível utilizar `time.Duration` nestas interações, utilize `int` ou `float64` e inclua a unidade no nome do campo.
+
+Por exemplo, dado que o pacote `enconding/json` não suporta `time.Duration`, a unidade é incluida no nome do campo.
+
+<table>
+<thead><tr><th>Ruim</th><th>Bom</th></tr></thead>
+<tbody>
+<tr><td>
+
+```go
+// {"interval": 2}
+type Config struct {
+  Interval int `json:"interval"`
+}
+```
+
+</td><td>
+
+```go
+// {"intervalMillis": 2000}
+type Config struct {
+  IntervalMillis int `json:"intervalMillis"`
+}
+```
+
+</td></tr>
+</tbody></table>
+
+Quando não é possível utilizar `time.Time` nestas interações, a menos que um
+alternativa é acordada, utilize `string` e formate timestamps como definido no [RFC 3339]. Esse é o formato padrão utilizado por [`Time.UnmarshalText`] e esta disponível para uso em `Time.Format` e `time.Parse` via [`time.RFC3339`].
+
+  [`Time.UnmarshalText`]: https://golang.org/pkg/time/#Time.UnmarshalText
+  [`time.RFC3339`]: https://golang.org/pkg/time/#RFC3339
+
+Embora isto não tende a ser um problema na prática, tenha em mente que o pacote `"time"` não suporta parsear timestamps com segundos bissextos ([8728]), nem leva isto em conta nos cálculos ([15190]). Se você comparar dois instantes de tempo, a diferença não incluirá os segundos bissextos que talvez podem ter ocorrido entre estes dois instantes.
+
+  [8728]: https://github.com/golang/go/issues/8728
+  [15190]: https://github.com/golang/go/issues/15190
+
+### Erros
+
+#### Tipo de Erros
+
+Existem poucas opções para declarar errors.
+Considere os seguintes pontos antes de escolher a melhor opção para seu caso.
+
+- O caller (quem irá chamar seu método) precisa verificar seu erro para manipular algum comportamento?
+  Se sim, você deve supportar as funções [`errors.Is`] ou [`errors.As`] declarando uma variável "top-level" de erro ou um tipo customizado.
+- O erro é uma mensagem string estática, ou é uma mensagem dinâmica que necessita de informação sobre o contexto?
+  Para o primeiro, nós podemos utilizar [`errors.New`], mas para o segundo nós devemos utilizar [`fmt.Errorf`] ou um tipo de erro customizado.
+- Nós estamos propagando um erro retornado através de uma função de um nível abaixo? Se sim, veja [Utilizando Error Wrapping](utilizando-error-wrapping).
+
+[`errors.Is`]: https://golang.org/pkg/errors/#Is
+[`errors.As`]: https://golang.org/pkg/errors/#As
+
+| Verificar Erro? | Mensagem do Erro | Orientação                                   |
+|-----------------|------------------|----------------------------------------------|
+| Não             | estática         | [`errors.New`]                               |
+| Não             | dinâmica         | [`fmt.Errorf`]                               |
+| Sim             | estática         | criar uma top-level `var` com [`errors.New`] |
+| Sim             | dinâmica         | tipo de erro customizado                     |
+
+[`errors.New`]: https://golang.org/pkg/errors/#New
+[`fmt.Errorf`]: https://golang.org/pkg/fmt/#Errorf
+
+Por exemplo,
+utilize [`errors.New`] para um erro com uma mensagem string estática.
+Exporte este erro como variável para suportar a verificação/comparação (if) com `errors.Is` se o caller necessita fazer isto.
+
+<table>
+<thead><tr><th>Sem matching</th><th>Com matching</th></tr></thead>
 <tbody>
 <tr><td>
 
@@ -647,14 +794,9 @@ func Open() error {
 
 // package bar
 
-func use() {
-  if err := foo.Open(); err != nil {
-    if err.Error() == "could not open" {
-      // handle
-    } else {
-      panic("unknown error")
-    }
-  }
+if err := foo.Open(); err != nil {
+  // Não consigo manipular o erro
+  panic("unknown error")
 }
 ```
 
@@ -672,8 +814,8 @@ func Open() error {
 // package bar
 
 if err := foo.Open(); err != nil {
-  if err == foo.ErrCouldNotOpen {
-    // handle
+  if errors.Is(err, foo.ErrCouldNotOpen) {
+    // Consigo manipular o erro
   } else {
     panic("unknown error")
   }
@@ -683,53 +825,56 @@ if err := foo.Open(); err != nil {
 </td></tr>
 </tbody></table>
 
-Se você tiver um erro que os clientes talvez precisem detectar e você gostaria de adicionar
-para obter mais informações (por exemplo, não é uma sequência estática), você deve usar um
-tipo personalizado.
+Para um erro com string dinâmico,
+utilize [`fmt.Errorf`] se o caller não necessita verificar/manipular o mesmo,
+e um tipo `error` customizado se o caller necessita fazer isto.
 
 <table>
-<thead><tr><th>Ruim</th><th>Bom</th></tr></thead>
+<thead><tr><th>Sem matching</th><th>Com matching</th></tr></thead>
 <tbody>
 <tr><td>
 
 ```go
-func open(file string) error {
+// package foo
+
+func Open(file string) error {
   return fmt.Errorf("file %q not found", file)
 }
 
-func use() {
-  if err := open(); err != nil {
-    if strings.Contains(err.Error(), "not found") {
-      // handle
-    } else {
-      panic("unknown error")
-    }
-  }
+// package bar
+
+if err := foo.Open("testfile.txt"); err != nil {
+  // Não consigo manipular o erro
+  panic("unknown error")
 }
 ```
 
 </td><td>
 
 ```go
-type errNotFound struct {
-  file string
+// package foo
+
+type NotFoundError struct {
+  File string
 }
 
-func (e errNotFound) Error() string {
-  return fmt.Sprintf("file %q not found", e.file)
+func (e *NotFoundError) Error() string {
+  return fmt.Sprintf("file %q not found", e.File)
 }
 
-func open(file string) error {
-  return errNotFound{file: file}
+func Open(file string) error {
+  return &NotFoundError{File: file}
 }
 
-func use() {
-  if err := open(); err != nil {
-    if _, ok := err.(errNotFound); ok {
-      // handle
-    } else {
-      panic("unknown error")
-    }
+
+// package bar
+
+if err := foo.Open("testfile.txt"); err != nil {
+  var notFound *NotFoundError
+  if errors.As(err, &notFound) {
+    // Consigo manipular o erro
+  } else {
+    panic("unknown error")
   }
 }
 ```
@@ -737,42 +882,9 @@ func use() {
 </td></tr>
 </tbody></table>
 
-Cuidado ao exportar tipos de erro personalizados diretamente, pois eles se tornam parte do
-a API pública do pacote. É preferível expor funções de correspondência a
-verifique o erro.
+Note que se você exportar variáveis ou tipos de erro de um pacote, eles se tornaram parte da sua API púbica do pacote.
 
-```go
-// package foo
-
-type errNotFound struct {
-  file string
-}
-
-func (e errNotFound) Error() string {
-  return fmt.Sprintf("file %q not found", e.file)
-}
-
-func IsNotFoundError(err error) bool {
-  _, ok := err.(errNotFound)
-  return ok
-}
-
-func Open(file string) error {
-  return errNotFound{file: file}
-}
-
-// package bar
-
-if err := foo.Open("foo"); err != nil {
-  if foo.IsNotFoundError(err) {
-    // handle
-  } else {
-    panic("unknown error")
-  }
-}
-```
-
-<!-- TODO: Expondo as informações aos chamadores com funções de acessador. -->
+### Marcador para continuar atualizar a tradução :P
 
 ### Utilizando Error Wrapping
 
